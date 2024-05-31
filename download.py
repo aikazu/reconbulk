@@ -96,7 +96,7 @@ def main():
         except Exception as e:
             print(f"Failed to download {tool['name']}: {e}")
 
-    print("All tools are downloaded successfully.")
+    print("All tools are downloaded successfully. Open the directory and extract all the binary")
 
     if massdns_downloaded:
         print("\nMassDNS requires manual compilation. Please run the following commands:")

@@ -1,44 +1,30 @@
 {
-    "tools": {
-      "amass": {
-        "path": "amass",
-        "args": ["enum", "-passive", "-d", "{{domain}}", "-dir", "{{outputDir}}", "-o", "{{outputFile}}", "-rf", "{{resolversFile}}"]
-      },
-      "subfinder": {
-        "path": "subfinder",
-        "args": ["-nW", "-d", "{{domain}}", "-rL", "{{resolversFile}}", "-o", "{{outputFile}}"]
-      },
-      "assetfinder": {
-        "path": "sh",
-        "args": ["-c", "assetfinder {{domain}} > {{outputFile}}"]
-      },
-      "findomain": {
-        "path": "findomain",
-        "args": ["--target", "{{domain}}", "--resolvers", "{{resolversFile}}", "--threads", "40", "-u", "{{outputFile}}"]
-      },
-      "massdns": {
-        "path": "massdns",
-        "args": ["-r", "{{resolversFile}}", "-t", "A", "-o", "S", "-w", "{{outputFile}}", "{{inputFile}}"]
-      },
-      "httpx": {
-        "path": "httpx",
-        "args": ["-l", "{{inputFile}}", "-title", "-tech-detect", "-status-code", "-o", "{{outputFile}}"]
-      },
-      "naabu": {
-        "path": "naabu",
-        "args": ["-list", "{{inputFile}}", "-o", "{{outputFile}}"]
-      },
-      "nuclei": {
-        "path": "nuclei",
-        "args": ["-list", "{{inputFile}}", "-o", "{{outputFile}}"]
-      },
-      "crtsh": {
-        "url": "https://crt.sh/?q=%.{{domain}}&output=json"
-      }
-    },
-    "directories": {
-      "reconDir": "{{HOME}}/recon",
-      "resultsDir": "{{reconDir}}/results/{{domain}}-{{timestamp}}"
-    }
+  "amass": {
+      "command": "amass",
+      "args": ["enum", "-passive", "-d", "", "-dir", "", "-o", "", "-rf", ""]
+  },
+  "subfinder": {
+      "command": "subfinder",
+      "args": ["-nW", "-d", "", "-rL", "", "-o", ""]
+  },
+  "assetfinder": {
+      "command": "sh",
+      "args": ["-c", "assetfinder  > "]
+  },
+  "findomain": {
+      "command": "findomain",
+      "args": ["--target", "", "--resolvers", "", "--threads", "40", "-u", ""]
+  },
+  "httpx": {
+      "command": "httpx",
+      "args": ["-l", "", "-title", "-tech-detect", "-status-code", "-o", ""]
+  },
+  "naabu": {
+      "command": "naabu",
+      "args": ["-list", "", "-o", ""]
+  },
+  "nuclei": {
+      "command": "nuclei",
+      "args": ["-list", "", "-o", ""]
   }
-  
+}

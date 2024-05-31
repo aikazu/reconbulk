@@ -13,84 +13,36 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
-	"text/template"
 	"time"
 )
 
 type Config struct {
-	Tools struct {
-		Amass      ToolConfig `json:"amass"`
-		Subfinder  ToolConfig `json:"subfinder"`
-		Assetfinder ToolConfig `json:"assetfinder"`
-		Findomain  ToolConfig `json:"findomain"`
-		Massdns    ToolConfig `json:"massdns"`
-		Httpx      ToolConfig `json:"httpx"`
-		Naabu      ToolConfig `json:"naabu"`
-		Nuclei     ToolConfig `json:"nuclei"`
-		Crtsh      struct {
-			URL string `json:"url"`
-		} `json:"crtsh"`
-	} `json:"tools"`
-	Directories struct {
-		ReconDir   string `json:"reconDir"`
-		ResultsDir string `json:"resultsDir"`
-	} `json:"directories"`
+	Amass       CommandConfig `json:"amass"`
+	Subfinder   CommandConfig `json:"subfinder"`
+	Assetfinder CommandConfig `json:"assetfinder"`
+	Findomain   CommandConfig `json:"findomain"`
+	Httpx       CommandConfig `json:"httpx"`
+	Naabu       CommandConfig `json:"naabu"`
+	Nuclei      CommandConfig `json:"nuclei"`
 }
 
-type ToolConfig struct {
-	Path string   `json:"path"`
-	Args []string `json:"args"`
+type CommandConfig struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 }
 
-func loadConfig(configFile string) (*Config, error) {
-	file, err := os.Open(configFile)
+var config Config
+
+func loadConfig(configPath string) {
+	data, err := ioutil.ReadFile(configPath)
 	if err != nil {
-		return nil, err
+		log.Fatalf("Failed to read config file: %v", err)
 	}
-	defer file.Close()
-
-	var config Config
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&config); err != nil {
-		return nil, err
-	}
-
-	return &config, nil
-}
-
-func renderTemplate(templateStr string, data interface{}) (string, error) {
-	tmpl, err := template.New("config").Parse(templateStr)
+	err = json.Unmarshal(data, &config)
 	if err != nil {
-		return "", err
+		log.Fatalf("Failed to parse config file: %v", err)
 	}
-
-	var rendered strings.Builder
-	err = tmpl.Execute(&rendered, data)
-	if err != nil {
-		return "", err
-	}
-
-	return rendered.String(), nil
-}
-
-func startCmd(config ToolConfig, data map[string]string) *exec.Cmd {
-	toolsDir := "tools"
-	data["toolsDir"] = toolsDir
-
-	args := make([]string, len(config.Args))
-	for i, arg := range config.Args {
-		renderedArg, err := renderTemplate(arg, data)
-		if err != nil {
-			log.Fatalf("Failed to render template: %v", err)
-		}
-		args[i] = renderedArg
-	}
-	cmd := exec.Command(filepath.Join(toolsDir, config.Path), args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd
 }
 
 func printBanner() {
@@ -110,63 +62,91 @@ func printBanner() {
 	fmt.Println()
 }
 
-func checkErr(err error, context string) {
+func banner() {
+	printBanner()
+}
+
+func checkErr(err error) {
 	if err != nil {
-		log.Fatalf("%s: %v", context, err)
+		log.Fatal(err)
 	}
 }
 
-func executeCmd(cmd *exec.Cmd, wg *sync.WaitGroup) {
-	defer wg.Done()
+func showOutputInRealTime(cmd *exec.Cmd) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		log.Printf("Error running %s: %v", cmd.String(), err)
-	}
 }
 
-func findSubdomains(config *Config, domain, resolversFile, resultDir string, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	data := map[string]string{
-		"domain":       domain,
-		"resolversFile": resolversFile,
-		"outputDir":    resultDir,
-	}
-
-	tools := []ToolConfig{
-		config.Tools.Amass,
-		config.Tools.Subfinder,
-		config.Tools.Assetfinder,
-		config.Tools.Findomain,
-	}
-
-	var cmdWg sync.WaitGroup
-	for _, tool := range tools {
-		data["outputFile"] = filepath.Join(resultDir, fmt.Sprintf("%s_%s.txt", tool.Path, domain))
-		cmd := startCmd(tool, data)
-		cmdWg.Add(1)
-		go executeCmd(cmd, &cmdWg)
-	}
-
-	cmdWg.Wait()
+func executeCmd(cmd *exec.Cmd, sleepSeconds int) {
+	showOutputInRealTime(cmd)
+	time.Sleep(time.Duration(sleepSeconds) * time.Second)
+	cmd.Run()
 }
 
-func scanCRT(config *Config, domain, resultDir string) {
+func startCmd(commandConfig CommandConfig, domain, resultDir, outputFile, resolversFile string) *exec.Cmd {
+	cmdArgs := make([]string, len(commandConfig.Args))
+	copy(cmdArgs, commandConfig.Args)
+	for i := 0; i < len(cmdArgs); i++ {
+		cmdArgs[i] = strings.Replace(cmdArgs[i], "{domain}", domain, -1)
+		cmdArgs[i] = strings.Replace(cmdArgs[i], "{dir}", resultDir, -1)
+		cmdArgs[i] = strings.Replace(cmdArgs[i], "{output}", outputFile, -1)
+		cmdArgs[i] = strings.Replace(cmdArgs[i], "{resolvers}", resolversFile, -1)
+	}
+	cmd := exec.Command(commandConfig.Command, cmdArgs...)
+	showOutputInRealTime(cmd)
+	return cmd
+}
+
+func startAmass(domain, resolversFile, resultDir string) *exec.Cmd {
+	outputFile := filepath.Join(resultDir, fmt.Sprintf("amass_%s.txt", domain))
+	return startCmd(config.Amass, domain, resultDir, outputFile, resolversFile)
+}
+
+func startSubfinder(domain, resolversFile, resultDir string) *exec.Cmd {
+	outputFile := filepath.Join(resultDir, fmt.Sprintf("subfinder_%s.txt", domain))
+	return startCmd(config.Subfinder, domain, resultDir, outputFile, resolversFile)
+}
+
+func startAssetfinder(domain, resultDir string) *exec.Cmd {
+	outputFile := filepath.Join(resultDir, fmt.Sprintf("assetfinder_%s.txt", domain))
+	return startCmd(config.Assetfinder, domain, resultDir, outputFile, "")
+}
+
+func startFindomain(domain, resolversFile, resultDir string) *exec.Cmd {
+	outputFile := filepath.Join(resultDir, fmt.Sprintf("findomain_%s.txt", domain))
+	return startCmd(config.Findomain, domain, resultDir, outputFile, resolversFile)
+}
+
+func findSubdomains(domain, resolversFile, resultDir string) (*exec.Cmd, *exec.Cmd, *exec.Cmd, *exec.Cmd) {
+	amassCmd := startAmass(domain, resolversFile, resultDir)
+	subfinderCmd := startSubfinder(domain, resolversFile, resultDir)
+	assetfinderCmd := startAssetfinder(domain, resultDir)
+	findomainCmd := startFindomain(domain, resolversFile, resultDir)
+
+	go executeCmd(amassCmd, 5)
+	go executeCmd(subfinderCmd, 5)
+	go executeCmd(assetfinderCmd, 5)
+	go executeCmd(findomainCmd, 5)
+
+	return amassCmd, subfinderCmd, assetfinderCmd, findomainCmd
+}
+
+func scanCRT(domain, resultDir string) {
 	fmt.Println("Scanning crt.sh...")
 	crtOutput := filepath.Join(resultDir, fmt.Sprintf("%s.crt.txt", domain))
-	crtURL := fmt.Sprintf(config.Tools.Crtsh.URL, domain)
+	crtURL := fmt.Sprintf("https://crt.sh/?q=%%.%s&output=json", domain)
 
 	response, err := exec.Command("curl", "-s", crtURL).Output()
-	checkErr(err, "Failed to get response from crt.sh")
+	checkErr(err)
 
 	var data []map[string]interface{}
-	err = json.Unmarshal(response, &data)
-	checkErr(err, "Failed to unmarshal crt.sh response")
+	json.Unmarshal(response, &data)
 
 	uniqueSubdomains := make(map[string]struct{})
+
 	for _, entry := range data {
-		if nameValue, ok := entry["name_value"].(string); ok && nameValue != "" {
+		nameValue := entry["name_value"].(string)
+		if nameValue != "" {
 			nameValue = strings.Replace(nameValue, "*.", "", -1)
 			uniqueSubdomains[nameValue] = struct{}{}
 		}
@@ -183,14 +163,20 @@ func fileExists(filename string) bool {
 
 func combineSubdomains(domain, resultDir string) {
 	fmt.Println("Combining subdomains...")
-	files := []string{"amass", "subfinder", "assetfinder", "findomain", "crt"}
+	amassOutput := filepath.Join(resultDir, fmt.Sprintf("amass_%s.txt", domain))
+	subfinderOutput := filepath.Join(resultDir, fmt.Sprintf("subfinder_%s.txt", domain))
+	assetfinderOutput := filepath.Join(resultDir, fmt.Sprintf("assetfinder_%s.txt", domain))
+	findomainOutput := filepath.Join(resultDir, fmt.Sprintf("findomain_%s.txt", domain))
+	crtOutput := filepath.Join(resultDir, fmt.Sprintf("%s.crt.txt", domain))
+	subdomainsOutput := filepath.Join(resultDir, fmt.Sprintf("%s.subdomains.txt", domain))
+
+	subdomainFiles := []string{amassOutput, subfinderOutput, assetfinderOutput, findomainOutput, crtOutput}
 	uniqueSubdomains := make(map[string]struct{})
 
-	for _, prefix := range files {
-		file := filepath.Join(resultDir, fmt.Sprintf("%s_%s.txt", prefix, domain))
+	for _, file := range subdomainFiles {
 		if fileExists(file) {
 			lines, err := ioutil.ReadFile(file)
-			checkErr(err, fmt.Sprintf("Failed to read file: %s", file))
+			checkErr(err)
 			for _, line := range strings.Split(string(lines), "\n") {
 				line = strings.TrimSpace(line)
 				if line != "" {
@@ -202,7 +188,6 @@ func combineSubdomains(domain, resultDir string) {
 		}
 	}
 
-	subdomainsOutput := filepath.Join(resultDir, fmt.Sprintf("%s.subdomains.txt", domain))
 	writeUniqueSubdomainsToFile(subdomainsOutput, uniqueSubdomains)
 	fmt.Printf("Combined subdomains written to: %s\n", subdomainsOutput)
 }
@@ -213,23 +198,18 @@ func writeUniqueSubdomainsToFile(filename string, uniqueSubdomains map[string]st
 		subdomains = append(subdomains, subdomain)
 	}
 	sort.Strings(subdomains)
+
 	err := ioutil.WriteFile(filename, []byte(strings.Join(subdomains, "\n")+"\n"), 0644)
-	checkErr(err, "Failed to write unique subdomains to file")
+	checkErr(err)
 }
 
-func findIPs(config *Config, domain, resolversFile, resultDir string) {
+func findIPs(domain, resolversFile, resultDir string) {
 	fmt.Println("Now finding IPs for subdomains...")
 	subdomainsOutput := filepath.Join(resultDir, fmt.Sprintf("%s.subdomains.txt", domain))
 	ipsOutput := filepath.Join(resultDir, fmt.Sprintf("%s.ips.txt", domain))
-
-	data := map[string]string{
-		"resolversFile": resolversFile,
-		"inputFile":     subdomainsOutput,
-		"outputFile":    ipsOutput,
-	}
-
-	cmd := startCmd(config.Tools.Massdns, data)
-	executeCmd(cmd, &sync.WaitGroup{})
+	cmd := exec.Command(filepath.Join("tools", "massdns"), "-r", resolversFile, "-t", "A", "-o", "S", "-w", ipsOutput, subdomainsOutput)
+	showOutputInRealTime(cmd)
+	cmd.Run()
 	fmt.Printf("IPs written to: %s\n", ipsOutput)
 }
 
@@ -242,25 +222,20 @@ func stripBrackets(text string) string {
 	return strings.Replace(strings.Replace(text, "[", "", -1), "]", "", -1)
 }
 
-func scanHttpx(config *Config, domain, resultDir string) {
+func scanHttpx(domain, resultDir string) {
 	fmt.Println("Scanning subdomains with httpx...")
 	subdomainsOutput := filepath.Join(resultDir, fmt.Sprintf("%s.subdomains.txt", domain))
 	httpxOutput := filepath.Join(resultDir, fmt.Sprintf("httpx_%s.txt", domain))
-
-	data := map[string]string{
-		"inputFile":  subdomainsOutput,
-		"outputFile": httpxOutput,
-	}
-
-	cmd := startCmd(config.Tools.Httpx, data)
-	executeCmd(cmd, &sync.WaitGroup{})
+	cmd := exec.Command(filepath.Join("tools", "httpx"), "-l", subdomainsOutput, "-title", "-tech-detect", "-status-code", "-o", httpxOutput)
+	showOutputInRealTime(cmd)
+	cmd.Run()
 	fmt.Printf("Httpx results written to: %s\n", httpxOutput)
 
 	fmt.Println("Sorting httpx results...")
 	sortedHttpxOutput := filepath.Join(resultDir, fmt.Sprintf("sorted_httpx_%s.txt", domain))
 
 	linesBytes, err := ioutil.ReadFile(httpxOutput)
-	checkErr(err, "Failed to read httpx output")
+	checkErr(err)
 	lines := strings.Split(string(linesBytes), "\n")
 
 	strippedLines := make([]string, 0, len(lines))
@@ -295,56 +270,47 @@ func scanHttpx(config *Config, domain, resultDir string) {
 	}
 
 	err = ioutil.WriteFile(sortedHttpxOutput, []byte(strings.Join(withUrls, "\n")+"\n"), 0644)
-	checkErr(err, "Failed to write sorted httpx results to file")
+	checkErr(err)
 	fmt.Printf("Sorted httpx results written to: %s\n", sortedHttpxOutput)
 }
 
-func scanNaabu(config *Config, domain, resultDir string) {
+func scanNaabu(domain, resultDir string) {
 	fmt.Println("Scanning subdomains with naabu...")
 	sortedHttpxOutput := filepath.Join(resultDir, fmt.Sprintf("sorted_httpx_%s.txt", domain))
 	naabuOutput := filepath.Join(resultDir, fmt.Sprintf("naabu_%s.txt", domain))
-
-	data := map[string]string{
-		"inputFile":  sortedHttpxOutput,
-		"outputFile": naabuOutput,
-	}
-
-	cmd := startCmd(config.Tools.Naabu, data)
-	executeCmd(cmd, &sync.WaitGroup{})
+	cmd := exec.Command(filepath.Join("tools", "naabu"), "-list", sortedHttpxOutput, "-o", naabuOutput)
+	showOutputInRealTime(cmd)
+	cmd.Run()
 	fmt.Printf("Naabu results written to: %s\n", naabuOutput)
 }
 
-func scanNuclei(config *Config, domain, resultDir string) {
+func scanNuclei(domain, resultDir string) {
 	fmt.Println("Scanning subdomains with nuclei...")
 	sortedHttpxOutput := filepath.Join(resultDir, fmt.Sprintf("sorted_httpx_%s.txt", domain))
 	nucleiOutput := filepath.Join(resultDir, fmt.Sprintf("nuclei_%s.txt", domain))
-
-	data := map[string]string{
-		"inputFile":  sortedHttpxOutput,
-		"outputFile": nucleiOutput,
-	}
-
-	cmd := startCmd(config.Tools.Nuclei, data)
-	executeCmd(cmd, &sync.WaitGroup{})
+	cmd := exec.Command(filepath.Join("tools", "nuclei"), "-list", sortedHttpxOutput, "-o", nucleiOutput)
+	showOutputInRealTime(cmd)
+	cmd.Run()
 	fmt.Printf("Nuclei results written to: %s\n", nucleiOutput)
 }
 
 func main() {
 	if len(os.Args) < 3 {
+		fmt.Println("2nd argument not supplied")
+		fmt.Println("2nd argument is the resolver file list path")
 		fmt.Println("Usage : ./reconbulk domain resolvers_list")
 		os.Exit(1)
 	}
 
-	config, err := loadConfig("config.json")
-	checkErr(err, "Failed to load config")
+	configPath := "config.json"
+	loadConfig(configPath)
 
 	domain := os.Args[1]
 	resolversFile := os.Args[2]
 	dt := time.Now().Format("2006-01-02.15.04.05")
 	reconDir := filepath.Join(os.Getenv("HOME"), "recon")
 	resultDir := filepath.Join(reconDir, fmt.Sprintf("results/%s-%s", domain, dt))
-	err = os.MkdirAll(resultDir, os.ModePerm)
-	checkErr(err, "Failed to create result directory")
+	os.MkdirAll(resultDir, os.ModePerm)
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
@@ -354,16 +320,25 @@ func main() {
 		os.Exit(1)
 	}()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go findSubdomains(config, domain, resolversFile, resultDir, &wg)
-	wg.Wait()
+	amassCmd, subfinderCmd, assetfinderCmd, findomainCmd := findSubdomains(domain, resolversFile, resultDir)
+	if amassCmd != nil {
+		amassCmd.Wait()
+	}
+	if subfinderCmd != nil {
+		subfinderCmd.Wait()
+	}
+	if assetfinderCmd != nil {
+		assetfinderCmd.Wait()
+	}
+	if findomainCmd != nil {
+		findomainCmd.Wait()
+	}
 
 	printBanner()
-	scanCRT(config, domain, resultDir)
+	scanCRT(domain, resultDir)
 	combineSubdomains(domain, resultDir)
-	findIPs(config, domain, resolversFile, resultDir)
-	scanHttpx(config, domain, resultDir)
-	scanNaabu(config, domain, resultDir)
-	scanNuclei(config, domain, resultDir)
+	findIPs(domain, resolversFile, resultDir)
+	scanHttpx(domain, resultDir)
+	scanNaabu(domain, resultDir)
+	scanNuclei(domain, resultDir)
 }
